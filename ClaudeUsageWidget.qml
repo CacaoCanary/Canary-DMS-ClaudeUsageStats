@@ -368,12 +368,22 @@ PluginComponent {
         return (l.kind || l.group || "?").replace(/_/g, " ") + (name ? " (" + name + ")" : "");
     }
 
-    function severityColor(severity, pct) {
-        if (severity === "critical" || severity === "exceeded" || severity === "error")
+    // The API's warning/critical are plain percentage levels (81% a day before
+    // the weekly reset is "warning"), so for windowed limits we use the projection.
+    function severityColor(severity, pct, resetIso, windowMs) {
+        if (severity === "exceeded")
+            return Theme.error;
+        if (windowMs && resetIso)
+            return usageColor(pct, resetIso, windowMs);
+        if (severity === "critical" || severity === "error")
             return Theme.error;
         if (severity === "warning")
             return Theme.warning;
-        return progressColor(pct);
+        return usageColor(pct, resetIso, windowMs);
+    }
+
+    function limitWindowMs(l) {
+        return l.group === "session" ? 18000000 : l.group === "weekly" ? 604800000 : 0;
     }
 
     // Every limit the API reports; falls back to the legacy per-window fields
@@ -460,6 +470,9 @@ PluginComponent {
     property string fiveHourCountdown: resetText(fiveHourReset)
     property string sevenDayCountdown: resetText(sevenDayReset)
 
+    readonly property color fiveHourColor: usageColor(fiveHourUtil, fiveHourReset, 18000000)
+    readonly property color sevenDayColor: usageColor(sevenDayUtil, sevenDayReset, 604800000)
+
     property var fiveHourPace: paceInfo(fiveHourUtil, fiveHourReset, 18000000)
     property var sevenDayPace: paceInfo(sevenDayUtil, sevenDayReset, 604800000)
     readonly property var pillPace: pillMetric === "seven_day" ? sevenDayPace : fiveHourPace
@@ -533,7 +546,7 @@ PluginComponent {
         ctx.stroke();
     }
 
-    function drawRing(ctx, cx, cy, r, lw, percent) {
+    function drawRing(ctx, cx, cy, r, lw, percent, color) {
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, 2 * Math.PI);
         ctx.lineWidth = lw;
@@ -544,7 +557,7 @@ PluginComponent {
             ctx.beginPath();
             ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
             ctx.lineWidth = lw;
-            ctx.strokeStyle = progressColor(percent);
+            ctx.strokeStyle = color || progressColor(percent);
             ctx.lineCap = "round";
             ctx.stroke();
         }
@@ -589,12 +602,33 @@ PluginComponent {
         return (family + " " + nums.join(".")).trim();
     }
 
+    // Fallback when the reset time is unknown: plain percentage thresholds
     function progressColor(pct) {
         if (pct > 80)
             return Theme.error;
         if (pct > 50)
             return Theme.warning;
         return Theme.primary;
+    }
+
+    // Color by where usage is heading, not where it is: 85% with ten minutes
+    // left is fine, 40% an hour into a 5h window is not.
+    // Projection = usage / elapsed fraction (elapsed floored at 10% so the
+    // first minutes of a window don't extrapolate wildly). Yellow when it
+    // would run out before the reset, red when that is also close (>= 80%).
+    function usageColor(util, resetIso, windowMs) {
+        void (countdownNow);
+        util = util || 0;
+        if (util >= 100)
+            return Theme.error;
+        var resetMs = resetIso ? new Date(resetIso).getTime() : NaN;
+        if (!windowMs || isNaN(resetMs))
+            return progressColor(util);
+        var timeFrac = Math.min(1, Math.max(0, (windowMs - (resetMs - countdownNow)) / windowMs));
+        var projected = util / Math.max(timeFrac, 0.1);
+        if (projected < 110)
+            return Theme.primary;
+        return util >= 80 ? Theme.error : Theme.warning;
     }
 
     function formatTier(tier) {
@@ -852,12 +886,14 @@ PluginComponent {
 
             property real percent: root.pillMetric === "seven_day" ? root.sevenDayUtil : root.fiveHourUtil
             onPercentChanged: requestPaint()
+            property color fill: root.pillMetric === "seven_day" ? root.sevenDayColor : root.fiveHourColor
+            onFillChanged: requestPaint()
             onWidthChanged: requestPaint()
 
             onPaint: {
                 var ctx = getContext("2d");
                 ctx.reset();
-                root.drawRing(ctx, width / 2, height / 2, width * 0.375, width * 0.125, percent);
+                root.drawRing(ctx, width / 2, height / 2, width * 0.375, width * 0.125, percent, fill);
             }
         }
     }
@@ -1050,13 +1086,15 @@ PluginComponent {
 
                                 property real percent: root.fiveHourUtil
                                 onPercentChanged: requestPaint()
+                                property color fill: root.fiveHourColor
+                                onFillChanged: requestPaint()
                                 property var pace: root.fiveHourPace
                                 onPaceChanged: requestPaint()
 
                                 onPaint: {
                                     var ctx = getContext("2d");
                                     ctx.reset();
-                                    root.drawRing(ctx, width / 2, height / 2, 38, 8, percent);
+                                    root.drawRing(ctx, width / 2, height / 2, 38, 8, percent, fill);
                                     root.drawPaceTick(ctx, width / 2, height / 2, 38, 8, pace);
                                 }
 
@@ -1087,7 +1125,7 @@ PluginComponent {
                                     text: Math.round(root.fiveHourUtil) + "% " + root.tr("used")
                                     visible: root.hasSynced
                                     font.pixelSize: Theme.fontSizeMedium
-                                    color: root.progressColor(root.fiveHourUtil)
+                                    color: root.fiveHourColor
                                     wrapMode: Text.WordWrap
                                 }
                                 StyledText {
@@ -1132,13 +1170,15 @@ PluginComponent {
 
                                 property real percent: root.sevenDayUtil
                                 onPercentChanged: requestPaint()
+                                property color fill: root.sevenDayColor
+                                onFillChanged: requestPaint()
                                 property var pace: root.sevenDayPace
                                 onPaceChanged: requestPaint()
 
                                 onPaint: {
                                     var ctx = getContext("2d");
                                     ctx.reset();
-                                    root.drawRing(ctx, width / 2, height / 2, 28, 6, percent);
+                                    root.drawRing(ctx, width / 2, height / 2, 28, 6, percent, fill);
                                     root.drawPaceTick(ctx, width / 2, height / 2, 28, 6, pace);
                                 }
 
@@ -1228,13 +1268,13 @@ PluginComponent {
                                         text: Math.round(pct) + "%"
                                         font.pixelSize: Theme.fontSizeSmall
                                         font.weight: Font.DemiBold
-                                        color: root.severityColor(modelData.severity, pct)
+                                        color: root.severityColor(modelData.severity, pct, modelData.resets_at, root.limitWindowMs(modelData))
                                     }
                                 }
 
                                 Bar {
                                     fraction: pct / 100
-                                    fill: root.severityColor(modelData.severity, pct)
+                                    fill: root.severityColor(modelData.severity, pct, modelData.resets_at, root.limitWindowMs(modelData))
                                 }
 
                                 StyledText {
