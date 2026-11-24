@@ -3,7 +3,7 @@
   "name": "Claude Usage and Stats",
   "description": "Claude Code usage from local transcripts: /usage limits, /stats overview, per-model charts and an activity heatmap. /usage is synced manually or on a configurable schedule",
   "version": "0.1.0",
-  "author": "HotcocoaCanary",
+  "author": "CacaoCanary",
   "icon": "monitoring",
   "type": "widget",
   "capabilities": [

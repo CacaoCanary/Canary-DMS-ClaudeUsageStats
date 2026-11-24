@@ -39,7 +39,7 @@ Settings > Plugins > Claude Usage:
 ## Installation
 
 ```bash
-git clone https://github.com/HotcocoaCanary/Canary-DMS-ClaudeUsageStats.git ~/.config/dms/plugins/claudeUsageStats
+git clone https://github.com/CacaoCanary/Canary-DMS-ClaudeUsageStats.git ~/.config/dms/plugins/claudeUsageStats
 dms ipc call plugin-scan scan
 dms ipc call plugins enable claudeUsageStats
 ```
